@@ -78,7 +78,7 @@ with BrickBLE(broadcasting_channel=2, observing_channels=[2,3]) as ble:
 
 # Documentation
 
-## `BrickBLE(broadcasting_channel=INT, observing_channels=INT\[\])`
+## `BrickBLE(broadcasting_channel=INT, observing_channels=INT[])`
 
 This class is similar to how the Hubs are declared in PyBricks, it
 initializes a new instance of the BrickBLE class with the specified

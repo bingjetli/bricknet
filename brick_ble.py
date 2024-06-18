@@ -657,11 +657,3 @@ class BrickBLE(object):
             max_interval=PYBRICKS_BLE_MAX_AD_INTERVAL,
             data=self._generate_pybricks_encoded_ad_data(data),
         )
-
-        ## TODO: Now that broadcasting is more or less set up, here what you
-        # need to do next week :
-        # - test whether or not the `.broadcast()` method works as expected. WORKS
-        # - find out if we need to call `.stop_le_advertising()` before calling
-        #   `.start_le_advertising()`.
-        # - finish the encoding logic for `_generate_pybricks_encoded_ad_data()`
-        #   - started encoding integer data
