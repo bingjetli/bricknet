@@ -166,8 +166,8 @@ def enable_le_scan(sock, interval=0x0800, window=0x0800,
 
     :param sock: A bluetooth HCI socket (retrieved using the
         ``hci_open_dev`` PyBluez function).
-    :param interval: Scan interval. * 0.625ms
-    :param window: Scan window (must be less or equal than given interval). * 0.625ms
+    :param interval: Scan interval.
+    :param window: Scan window (must be less or equal than given interval).
     :param filter_policy: One of
         ``FILTER_POLICY_NO_WHITELIST`` (default value)
         ``FILTER_POLICY_SCAN_WHITELIST``

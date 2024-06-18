@@ -1,8 +1,14 @@
 from time import time
-import bluetooth_utils as btu
+from .py_bluetooth_utils import bluetooth_utils as btu
 import bluetooth._bluetooth as bluez
 from threading import Thread, Event
 import struct
+
+
+MAX_SINGLE_FLOAT_VALUE = 1.175494351e-38
+MIN_SINGLE_FLOAT_VALUE = 3.402823466e+38
+MAX_DOUBLE_FLOAT_VALUE = 1.7976931348623157e+308
+MIN_DOUBLE_FLOAT_VALUE = 2.2250738585072014e-308
 
 
 INT8_MIN = -128
@@ -36,6 +42,20 @@ PYBRICKS_BLE_SCAN_INTERVAL = 0x30
 PYBRICKS_BLE_SCAN_WINDOW = 0x30
 PYBRICKS_BLE_MIN_AD_INTERVAL = 0x64
 PYBRICKS_BLE_MAX_AD_INTERVAL = 0x64
+
+
+DEBUG_ENABLED = True
+def _log(string_content):
+    """
+    Internal function used to print messages to the console.
+    
+    Only prints messages when the DEBUG_ENABLED flag is set to true.
+
+    @param `string_content` : Any string content that should be passed
+                                into the print() function.
+    """
+    if DEBUG_ENABLED:
+        print("[BrickBLE]: {}".format(string_content)) 
 
 
 def get_uint16_little_endian(byte_buffer):
@@ -88,14 +108,14 @@ def thread_ble_event_parser(event_exit_flag, bt_hci_socket, handler=None):
             # to filter out these events.
 
             ## TODO: Maybe this should throw an exception then?
-            print("Not a LE_META_EVENT!")
+            _log("Not a LE META_EVENT!")
             continue
 
         (sub_event,) = struct.unpack("B", packet[3:4])
         if sub_event != btu.EVT_LE_ADVERTISING_REPORT:
             ## We're only interested in parsing BLE Advertising Events,
             # so we skip packets that don't indicate this flag.
-            print("Skipped packet... ")
+            _log("Skipped packet... ")
             continue
 
         packet = packet[4:]
@@ -124,11 +144,11 @@ def thread_ble_event_parser(event_exit_flag, bt_hci_socket, handler=None):
 
     ## If we've reached this point, it means the exit flag event was
     # set by the calling thread, so we perform cleanup actions here.
-    print("Stop event received, attempting to restore old BLE filter.")
+    _log("Stop event received, attempting to restore old BLE filter.")
 
     bt_hci_socket.setsockopt(bluez.SOL_HCI, bluez.HCI_FILTER, old_ble_filter)
 
-    print("Reached the end of the BLE Event Parser Thread")
+    _log("Reached the end of the BLE Event Parser Thread")
 
 
 class BrickBLE(object):
@@ -201,8 +221,7 @@ class BrickBLE(object):
             self._scanning_thread.start()
 
         except:
-            print("An error occured while initializing the PyBrick BLE Module.")
-            raise
+            raise Exception("An error occured while initializing the PyBrick BLE Module.")
 
     def __enter__(self):
         return self
@@ -221,7 +240,7 @@ class BrickBLE(object):
         ## Disable BLE Broadcasting in case we were advertising data.
         btu.stop_le_advertising(self._hci_socket)
 
-        print("BrickBLE resources cleaned up successfully!")
+        _log("BrickBLE resources cleaned up successfully!")
 
     def _lookup_observed_data(self, channel):
         """
@@ -303,6 +322,7 @@ class BrickBLE(object):
         ## Lastly, set the data that we observed for the channel during
         # this observe event.
         self._observed_channel_data[channel]["data"] = advertising_data[7:]
+        #_log("Received Advertising Data: {}".format(advertising_data))
 
     def _decode_pybrick_ble_data(self, raw_data):
         """
@@ -313,6 +333,8 @@ class BrickBLE(object):
         """
         data_type = raw_data[0] >> 5
         size = raw_data[0] & 0x1F
+
+        _log("_decode_pybrick_ble_data -> {}".format(raw_data))
 
         if data_type is PYBRICKS_BLE_BROADCAST_DATA_TYPE_SINGLE_OBJECT:
             # TODO: Implement single object parsing for the byte stream.
@@ -328,8 +350,8 @@ class BrickBLE(object):
             return int.from_bytes(raw_data[1:], byteorder="little", signed=True)
 
         if data_type is PYBRICKS_BLE_BROADCAST_DATA_TYPE_FLOAT:
-            # TODO: Implement Float Parsing from the byte stream.
-            return "float"
+            return struct.unpack("f", raw_data[1:])[0]
+
 
         if data_type is PYBRICKS_BLE_BROADCAST_DATA_TYPE_STR:
             return "" if size <= 0 else (raw_data[1:]).decode(encoding="utf-8")
@@ -398,9 +420,206 @@ class BrickBLE(object):
             )
             return ad_data
 
-        # data_length = len(input_data)
-        # struct_format = "<BB2sBxB{}s".format(data_length)
-        # packet_size = struct.calcsize(struct_format)
+        if type(input_data) is int:
+            ## `0x61 0x00` when `0`                     0110 0001 0000 0000
+            ## `0x61 0xff` when `-1`                    0110 0001 1111 1111
+            ## `0x61 0x01` when `1`                     0110 0001 0000 0001
+            ## `0x61 0x9c` when `-100`                  0110 0001 1001 1100
+            ## `0x62 0xff 0x00` when `255`              0110 0010 1111 1111 0000 0000
+            ## `0x62 0x01 0xff` when `-255`             0110 0010 0000 0001 1111 1111
+            ## `0x64 0xff 0xff 0x0 0x0` when `65535`    0110 0100 1111 1111 ...
+
+            ## Based on the above sample, it seems that the way integers
+            # are encoded are as follows :
+            #   DATA_TYPE_INTEGER               -> 0x6 (0110)
+            #   integer_size                    -> 0x1 (0001) -> 8bit
+            #                                   -> 0x2 (0010) -> 16bit
+            #                                   -> 0x4 (0100) -> 32bit
+            #
+            #   2's complement integer value    -> ...
+
+            ## First, determine the size of the input integer.
+            integer_size = None
+
+            ## NB: Match-Case is not available in Python 3.5
+            # match (input_data):
+            #     case n if n < 128 and n >= -128:
+            #         ## 8bit signed integer
+            #         integer_size = 1  # bytes
+            #     case n if n < 32767 and n >= -32768:
+            #         ## 16bit signed integer
+            #         integer_size = 2  # bytes
+            #     case n if n < 2147483647 and n >= -2147483648:
+            #         ## 32bit signed integer
+            #         integer_size = 4  # bytes
+            #     case _:
+            #         raise Exception(
+            #             "[BrickBLE]: .broadcast() only supports up to 32bit integers!"
+            #         )
+            if input_data < 128 and input_data >= -128:
+                integer_size = 1
+            elif input_data < 32767 and input_data >= -32768:
+                integer_size = 2
+            elif input_data < 2147483647 and input_data >= -2147483648:
+                integer_size = 4
+            else:
+                raise Exception(
+                    "[BrickBLE]: .broadcast() only supports up to 32bit integers!"
+                )
+
+            ## Specify the format of the advertisement data as the following:
+            # <     : Litte Endian
+            # B     : Unsigned Char     -> PYBRICKS_BLE_BROADCAST_DATA_MIN_LENGTH
+            # B     : Unsigned Char     -> MFG_SPECIFIC
+            # 2s    : char[2]           -> LEGO_CID
+            # B     : Unsigned Char     -> broadcast_channel
+            # x     : Pad Byte
+            # B     : Unsigned Char     -> DATA_TYPE_INTEGER, integer_size
+            # {}s   : char[]            -> 2's complement integer value
+            ad_data_format = "<BB2sBxB{}s".format(integer_size)
+
+            ## Generate the byte containing the data type and integer size.
+            metadata = (6 << 4) | integer_size
+            #metadata = ((6 << 4) & 255) | (integer_size & 255)
+            _log("Calculated metadata value : {} ({})".format(metadata.to_bytes(1, byteorder="big").hex(), bin(metadata)))
+
+            ## Generate the ad data based on the format specified above.
+            ad_data_length = struct.calcsize(ad_data_format)
+            padded_ad_data_format = "{}{}x".format(
+                ad_data_format, BLE_ADVERTISEMENT_DATA_MAX_LENGTH - ad_data_length
+            )
+            ad_data = struct.pack(
+                padded_ad_data_format,
+                PYBRICKS_BLE_BROADCAST_DATA_MIN_LENGTH,
+                MFG_SPECIFIC,
+                get_uint16_little_endian(LEGO_CID),
+                self._broadcast_channel,
+                metadata,
+                input_data.to_bytes(integer_size, byteorder="little", signed=True),
+            )
+            return ad_data
+
+            
+        if type(input_data) is float:
+            ## Floating Point Numbers refresher :
+            # Given 32 bits, a float is represented as follows:
+            #   - 1 bit : represents the sign positive or negative. 0
+            #             is a positive number, 1 is a negative number.
+            #   - 8 bits : represents the exponent of 2 because floating
+            #              points are scientific notation representation
+            #              of numbers in base 2. The full 8 bits = 2^128.
+            #   - 23 bits : represents the decimal points of the significant.
+            #               The first digit is omitted because it is nearly
+            #               almost always 1.xxxx...
+            #               So the full 23 bits = .9999999.
+            #
+            # -S- -------E--------- ---------------------M-------------------------
+            # []  [][][][][][][][]  [][][][][][][][][][][][][][][][][][][][][][][]
+            #
+            # Floating point value = S * 2^E * (1.0 + M) where S = the sign,
+            #                                            E = the exponent, and
+            #                                            M = the significant
+
+            ## How floating points are handled in PyBricks BLE
+            # Similiar to the integers, floating points are handled such
+            # that there is a metadata section of 2 bytes (0xff) containing
+            # the data type of the data and the size of the data type.
+
+            ## In this case, the data type is FLOAT = 4 (0x8) and the size is
+            # either DOUBLE PRECISION = 8 or SINGLE PRECISION = 4
+
+            ## So each floating point data type will be structured with
+            # either 0x84 or 0x88 followed by the floating point value.
+
+            floating_point_precision = 4
+            ## It seems the PyBricks implementation at the time of testing
+            # only supports 32bit floats.
+            
+            #if input_data <= MAX_SINGLE_FLOAT_VALUE and input_data >= MIN_SINGLE_FLOAT_VALUE:
+            #    _log("Single FLoat Detected: {}".format(input_data))
+            #    floating_point_precision = 4
+            #elif input_data <= MAX_DOUBLE_FLOAT_VALUE and input_data >= MIN_DOUBLE_FLOAT_VALUE:
+            #    _log("Double FLoat Detected: {}".format(input_data))
+            #    floating_point_precision = 8
+            #else:
+            #    raise Exception("[BrickBLE]: _generate_pybricks_encoded_ad_data() inside .broadcast() encountered an error while attempting to determine the floating point precision.")
+
+            
+            
+            ## Specify the format of the advertisement data as the following:
+            # <         : Litte Endian
+            # B         : Unsigned Char     -> PYBRICKS_BLE_BROADCAST_DATA_MIN_LENGTH
+            # B         : Unsigned Char     -> MFG_SPECIFIC
+            # 2s        : char[2]           -> LEGO_CID
+            # B         : Unsigned Char     -> broadcast_channel
+            # x         : Pad Byte
+            # B         : Unsigned Char     -> DATA_TYPE_FLOAT, floating_point_precision
+            # f or d    : float or double   -> the float value
+            ad_data_format = "<BB2sBxB{}".format("f" if floating_point_precision is 4 else "d")
+            
+
+            ## Generate the bytes containing the data type and floating point precision.
+            metadata = (8 << 4) | floating_point_precision
+            _log("Calculated metadata value : {} ({})".format(metadata.to_bytes(1, byteorder="big").hex(), bin(metadata)))
+
+            ## Generate the ad data based on the format specified above.
+            ad_data_length = struct.calcsize(ad_data_format)
+            padded_ad_data_format = "{}{}x".format(
+                ad_data_format, BLE_ADVERTISEMENT_DATA_MAX_LENGTH - ad_data_length
+            )
+            ad_data = struct.pack(
+                padded_ad_data_format,
+                PYBRICKS_BLE_BROADCAST_DATA_MIN_LENGTH,
+                MFG_SPECIFIC,
+                get_uint16_little_endian(LEGO_CID),
+                self._broadcast_channel,
+                metadata,
+                input_data,
+            )
+            return ad_data
+
+
+        if type(input_data) is str:
+            ## The string data type is straightforward, it is the data
+            # type + the number of characters in the string, followed
+            # by the string itself.
+
+            string_length = len(input_data)
+            if string_length > 24:
+                raise Exception("[BrickBLE]: .broadcast() only supports strings up to 24 characters!")
+
+            ## Specify the format of the advertisement data as the following:
+            # <         : Litte Endian
+            # B         : Unsigned Char     -> PYBRICKS_BLE_BROADCAST_DATA_MIN_LENGTH
+            # B         : Unsigned Char     -> MFG_SPECIFIC
+            # 2s        : char[2]           -> LEGO_CID
+            # B         : Unsigned Char     -> broadcast_channel
+            # x         : Pad Byte
+            # B         : Unsigned Char     -> DATA_TYPE_STR, string_length
+            # {}s       : char[]            -> string input data
+            ad_data_format = "<BB2sBxB{}s".format(string_length)
+            
+
+            ## Generate the bytes containing the data type and floating point precision.
+            metadata = (10 << 4) | string_length
+            _log("Calculated metadata value : {} ({}) -- str_len {}".format(metadata.to_bytes(1, byteorder="big").hex(), bin(metadata), string_length))
+
+            ## Generate the ad data based on the format specified above.
+            ad_data_length = struct.calcsize(ad_data_format)
+            padded_ad_data_format = "{}{}x".format(
+                ad_data_format, BLE_ADVERTISEMENT_DATA_MAX_LENGTH - ad_data_length
+            )
+            ad_data = struct.pack(
+                padded_ad_data_format,
+                PYBRICKS_BLE_BROADCAST_DATA_MIN_LENGTH,
+                MFG_SPECIFIC,
+                get_uint16_little_endian(LEGO_CID),
+                self._broadcast_channel,
+                metadata,
+                bytearray(input_data, encoding="utf-8"),
+            )
+            return ad_data
+
 
     def observe(self, channel):
         """
@@ -441,19 +660,8 @@ class BrickBLE(object):
 
         ## TODO: Now that broadcasting is more or less set up, here what you
         # need to do next week :
-        # - test whether or not the `.broadcast()` method works as expected.
+        # - test whether or not the `.broadcast()` method works as expected. WORKS
         # - find out if we need to call `.stop_le_advertising()` before calling
         #   `.start_le_advertising()`.
         # - finish the encoding logic for `_generate_pybricks_encoded_ad_data()`
-
-        ## OLD
-        # value = {
-        #    v: None,
-        #    d: [None] * (5 + OBSERVED_DATA_MAX_SIZE),
-        # }
-
-        # index = None
-        # if type(data) is tuple or type(data) is list:
-        #    index = 0
-        # else:
-        #    index = 1
+        #   - started encoding integer data
