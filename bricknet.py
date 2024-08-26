@@ -1,15 +1,22 @@
 # [x]  TODO: Finish all the remaining imports for the bluetooth managers.
-# [-]  TODO: Write a function to split long messages into chunks.
+# [x]  TODO: Write a function to split long messages into chunks.
 # [x]  TODO: Fix the BLE function to handle sending/receiving bytes properly
 # [-]  TODO: Add a way to make fetch requests from BrickNet.
-# [-]  TODO: Add a way to ensure that chunked messages are sent once and in order.
+# [x]  TODO: Add a way to ensure that chunked messages are sent once and in order.
+# [x]       - Right now, duplicates are merged, so we need to fix that.
+# [*]       - We also need to handle cases where the message number might be invalid
+#               indicating that we've desynced
 # [ ]  TODO: Add more callback functions to hook into the main loop.
+#
+# x = done
+# - = in progress
+# * = temporary fix
 
 ## *********************
 ## LOGGING AND DEBUGGING
 ## *********************
 
-DEBUG_ENABLED = False
+DEBUG_ENABLED = True
 def _log(input):
     """
     Prints a message to the console if debugging is enabled.
@@ -75,6 +82,25 @@ except ImportError:
     _log("Unable to import umath.ceil")
 
 
+try:
+    from struct import pack as pack_bytes
+except ImportError:
+    _log("struct.pack is unavailable")
+
+try:
+    from ustruct import pack as pack_bytes
+except ImportError:
+    _log("ustruct.pack is unavailable")
+
+try:
+    from struct import unpack as unpack_bytes
+except ImportError:
+    _log("struct.unpack is unavailable")
+
+try:
+    from ustruct import unpack as unpack_bytes
+except ImportError:
+    _log("ustruct.unpack is unavailable")
 
 
 ## ********************
@@ -101,13 +127,13 @@ COMMUNICATION_STATE_READY = "ready"
 COMMUNICATION_STATE_SENT = "sent"
 COMMUNICATION_STATE_RECEIVED = "received"
 
-MESSAGE_TYPE_READY = "#R#"
-MESSAGE_TYPE_SENT = "#S#"
-MESSAGE_TYPE_RECEIVED = "#A#"
+#MESSAGE_TYPE_READY = "#R#"
+#MESSAGE_TYPE_SENT = "#S#"
+#MESSAGE_TYPE_RECEIVED = "#A#"
 
-#MESSAGE_TYPE_READY = 0x00
-#MESSAGE_TYPE_SENT = 0x01
-#MESSAGE_TYPE_RECEIVED = 0x02
+MESSAGE_TYPE_READY = 0x00
+MESSAGE_TYPE_SENT = 0x01
+MESSAGE_TYPE_RECEIVED = 0x02
 
 MESSAGE_SUBTYPE_DIRECT = 0x00
 MESSAGE_SUBTYPE_REDIRECT = 0x01
@@ -116,6 +142,7 @@ MESSAGE_SUBTYPE_POST = 0x03
 MESSAGE_SUBTYPE_PUT = 0x04
 MESSAGE_SUBTYPE_PATCH = 0x05
 MESSAGE_SUBTYPE_DELETE = 0x06
+
 
 ## This value specifies the amount of time to wait in any of the transition
 # states(SENT/RECEIVED) before timing out and returning to the READY state.
@@ -233,8 +260,8 @@ class Message(object):
     def __init__(
         self, 
         message_type, 
-        #message_subtype=MESSAGE_SUBTYPE_DIRECT, 
-        #message_number = 0, 
+        message_subtype=MESSAGE_SUBTYPE_DIRECT, 
+        message_number = 0, 
         payload=None
     ):
         ## Validating the message_type parameter...
@@ -246,24 +273,26 @@ class Message(object):
             raise Exception("[BrickNet]: Unknown message type: {}".format(message_type))
 
         ## Validating the message_subtype parameter...
-        #if(
-        #    message_subtype != MESSAGE_SUBTYPE_DIRECT and
-        #    message_subtype != MESSAGE_SUBTYPE_REDIRECT and
-        #    message_subtype != MESSAGE_SUBTYPE_GET and
-        #    message_subtype != MESSAGE_SUBTYPE_POST and
-        #    message_subtype != MESSAGE_SUBTYPE_PUT and
-        #    message_subtype != MESSAGE_SUBTYPE_PATCH and
-        #    message_subtype != MESSAGE_SUBTYPE_DELETE
-        #):
-        #    raise Exception("[BrickNet]: Unknown message subtype: {}".format(message_subtype))
+        if(
+            message_subtype != MESSAGE_SUBTYPE_DIRECT and
+            message_subtype != MESSAGE_SUBTYPE_REDIRECT and
+            message_subtype != MESSAGE_SUBTYPE_GET and
+            message_subtype != MESSAGE_SUBTYPE_POST and
+            message_subtype != MESSAGE_SUBTYPE_PUT and
+            message_subtype != MESSAGE_SUBTYPE_PATCH and
+            message_subtype != MESSAGE_SUBTYPE_DELETE
+        ):
+            raise Exception("[BrickNet]: Unknown message subtype: {}".format(message_subtype))
+
+        ## Validate payload size...
+        if payload is not None:
+            if len(payload) > self.get_max_payload_length_for_subtype(message_subtype):
+                raise Exception("[BrickNet]: Payload maximum size exceeded: ({}) {}".format(len(payload), payload))
 
         self._header = message_type
-        #self._message_type = message_type
-        #self._message_subtype = message_subtype
-        #self._message_number = message_number
-
-        ## TODO: Implement error checking to ensure that the correct size
-        # is passed in.
+        self._message_type = message_type
+        self._message_subtype = message_subtype
+        self._message_number = message_number
         self._payload = payload
 
     def _get_message_type_and_subtype(self):
@@ -279,14 +308,40 @@ class Message(object):
         # where T = Message Type and S = Message Subtype
         return (self._message_type << 4) | self._message_subtype
 
+    def _get_message_header(self):
+        """
+        Creates the message header.
+
+        [MESSAGE_TYPE_AND_SUBTYPE (1 byte)][MESSAGE_NUMBER (1 byte)]
+
+        """
+        return pack_bytes("<BB", self._get_message_type_and_subtype(), self._message_number)
+
     def get_broadcast_data(self):
         """
         Returns the data that can be passed into the .broadcast() method.
 
         @returns: String - The payload of this message as a string.
         """
-        ## TODO: Either replace get_message_payload or this function.
-        return "{}{}".format(self._header, self._payload if self._payload else "")
+        _log("\t + Message->get_broadcast_data(): {}".format(self))
+        #return "{}{}".format(self._header, self._payload if self._payload else "")
+        if self._payload is None:
+            return pack_bytes(
+                "<2s", 
+                self._get_message_header(), 
+            )
+
+        formatted_payload = self._payload
+        if type(self._payload) == str:
+            ## The format string `{}s` for pack_bytes expects a bytes object.
+            formatted_payload = bytes(self._payload, "utf-8")
+
+        return pack_bytes(
+            "<2s{}s".format(len(self._payload)), 
+            self._get_message_header(), 
+            formatted_payload
+        )
+
 
     def get_message_type(self):
         """
@@ -294,7 +349,7 @@ class Message(object):
 
         @returns: String - The message type.
         """
-        return self._header
+        return self._message_type
 
     def get_message_payload(self):
         """
@@ -302,8 +357,41 @@ class Message(object):
 
         @returns: Any - The message payload.
         """
-        ## TODO: Either replace get_broadcast_data or this function.
         return self._payload
+
+    def get_message_number(self):
+        return self._message_number
+
+    @staticmethod
+    def get_max_payload_length_for_subtype(message_subtype):
+        if message_subtype == MESSAGE_SUBTYPE_DIRECT:
+            return 24 - 2
+
+        ## TODO: complete this for each subtype
+
+
+    @staticmethod
+    def generate_from_observed_data(raw_data):
+        message_subtype = raw_data[0] & 0x0f
+        message_type = raw_data[0] >> 4
+        message_number = raw_data[1]
+        message_payload = None
+
+        if message_type == MESSAGE_TYPE_SENT:
+            ## ASSUMPTION: Only the SENT message type has payload data.
+            message_payload = raw_data[2:]
+
+        return Message(message_type, message_subtype, message_number, message_payload)
+
+
+    def __str__(self):
+        return "Type: {}, Subtype: {}, Number: {}, Payload: {} ({})".format(
+            self._message_type, 
+            self._message_subtype, 
+            self._message_number, 
+            self._payload,
+            len(self._payload) if self._payload is not None else 0
+        )
 
 
 class Port(object):
@@ -313,6 +401,14 @@ class Port(object):
 
     ## Contains a list of Message instances...
     _to_send = None
+
+    ## These variables are used to keep track of chunked messages.
+    # If a chunked message is encountered, the merge_counter is set and
+    # the chunked content is stored inside the merge_buffer.
+    _merge_counter = None
+    _merge_buffer = None
+
+    ## Flag that determines whether or not the dispatcher processed this port yet.
     _is_processed = None
 
     def __init__(self, channel, list_of_initial_items=[]):
@@ -328,6 +424,8 @@ class Port(object):
         ## Typically this is empty, but a list of initial message to send
         # can be specified.
         self._to_send = Queue(list_of_initial_items)
+
+        self._merge_counter = 0
 
     def get_broadcast_target_channel(self):
         return self._channel
@@ -346,6 +444,28 @@ class Port(object):
 
     def messages_for_this_port(self):
         return self._to_send
+
+
+    def get_merge_buffer(self):
+        return self._merge_buffer
+
+    def append_to_merge_buffer(self, item):
+        if self._merge_buffer is None:
+            ## Create the merge buffer with the item...
+            self._merge_buffer = item
+            return
+
+        self._merge_buffer+= item
+
+    def set_merge_counter(self, new_value):
+        self._merge_counter = new_value
+
+    def get_merge_counter(self):
+        return self._merge_counter
+
+    def clear_merge_buffer(self):
+        self._merge_buffer = None
+
 
     def set_remote_state(self, state):
         if is_valid_communication_state(state):
@@ -393,6 +513,25 @@ class Queue(object):
         Returns the length of the queue.
         """
         return len(self._queue)
+
+
+class Stack(object):
+    _stack = None
+
+    def __init__(self, list_of_initial_items=[]):
+        self._stack = list_of_initial_items
+
+    def push(self, item):
+        self._stack.append(item)
+
+    def pop(self):
+        return self._stack.pop()
+
+    def peek(self):
+        return self._stack[-1]
+
+    def get_length(self):
+        return len(self._stack)
 
 
 class BrickNet(object):
@@ -580,29 +719,10 @@ class BrickNet(object):
         self._is_running = False
 
     def _main_loop_iterate(self):
-
-        # ## First check that the device is in a state that is ready to
-        # # send messages..
-        # if self._communication_state != COMMUNICATION_STATE_READY:
-        #     ## We shouldn't try to send any more messages from the message
-        #     # queue unless this device is ready to send.
-        #     return
-
-        # ## TODO: We also need to check if the receiver is ready to receive.
-        # # so maybe we can add some kind of device state tracking inside
-        # # the message queue?
-
-        # ## Are there any messages waiting to be sent inside the message queue?
-        # if len(self._message_queue) > 0:
-        #     ## Send a message then..
-        #     message_to_send = self._message_queue.dequeue()
-
-        #     ## TODO: Send this message to the specified destination
-
         current_port = self._message_queue[self._current_port_index]
         current_port_channel = current_port.get_broadcast_target_channel()
 
-        _log("BrickNet._main_loop_iterate: processing port: {}".format(current_port_channel))
+        #_log("BrickNet._main_loop_iterate: processing port: {}".format(current_port_channel))
 
         ## First, try to observe any data that was broadcasted over Bluetooth.
         #observed_data = self.get_bluetooth_manager().observe(current_port_channel)
@@ -611,17 +731,20 @@ class BrickNet(object):
             ## We didn't observe any data from this channel, so the remote device
             # might not be READY. In this case, we can skip this channel and try
             # to see if another channel might be ready.
+            _log("_main_loop_iterate() -> no observed data, incrementing port from {}".format(current_port_channel))
             self._increment_port_index()
-            _log("Bricket._main_loop_iterate: No observed data, incrementing port..")
+            _log(" + to {}".format(current_port.get_broadcast_target_channel()))
             return
 
         ## Otherwise, if we observed something other than None...
-        message_type = observed_data[0:3]
-        message_payload = (
-            observed_data[3:] if message_type == MESSAGE_TYPE_SENT else None
-        )
-        current_port.set_last_message(Message(message_type, message_payload))
-        _log("BrickNet._main_loop_iterate: observed message: {}".format(message_type))
+        #message_type = observed_data[0:3]
+        #message_payload = (
+        #    observed_data[3:] if message_type == MESSAGE_TYPE_SENT else None
+        #)
+        #current_port.set_last_message(Message(message_type, message_payload))
+        observed_message = Message.generate_from_observed_data(observed_data)
+        current_port.set_last_message(observed_message)
+        #_log("BrickNet._main_loop_iterate: observed message: {}".format(observed_message))
 
 
         if self._communication_state == COMMUNICATION_STATE_READY:
@@ -629,14 +752,96 @@ class BrickNet(object):
             if current_port.get_last_message().get_message_type() == MESSAGE_TYPE_SENT:
                 ## We're ready, and the remote device just sent something...
 
-                # Call the .onReceived event handler with the current
-                # port channel, and the last message's payload data.
-                if self._on_received_handler is not None:
-                    self._on_received_handler(
-                        current_port_channel,
-                        current_port.get_last_message().get_message_payload(),
-                    )
-                _log("BrickNet._main_loop_iterate: Received SENT, called received hanlder")
+                current_port_message_number = current_port.get_last_message().get_message_number()
+                current_port_merge_counter = current_port.get_merge_counter()
+                if current_port_message_number == 0:
+                    ## We received a zero message number, so this is either the last
+                    # message of a chunk of messages or a non-shot message.
+                    _log("_main_loop_iterate() -> This Device: READY | Remote Message Type: SENT | Received a message numbered 0.")
+                    if current_port_merge_counter > 0:
+                        ## There is something in the merge buffer, so we should check if this message was expected
+                        _log("\t + merge_buffer has content")
+                        if current_port_message_number == current_port_merge_counter - 1:
+                            ## If it is, then we merge the message that we just
+                            # received as the final message, clear the buffer and
+                            # call the onReceived handler.
+                            _log("\t\t + expected: {}, received: {}".format(current_port_merge_counter - 1, current_port_message_number))
+                            current_port.append_to_merge_buffer(current_port.get_last_message().get_message_payload())
+                            _log("\t\t\t + appending the following to the merge buffer: {}".format(current_port.get_last_message().get_message_payload()))
+                            if self._on_received_handler is not None:
+                                self._on_received_handler(
+                                    current_port_channel,
+                                    current_port.get_merge_buffer(),
+                                )
+                            _log("_main_loop_iterate() -> Called onReceived handler with {}, {}".format(current_port_channel, current_port.get_merge_buffer()))
+
+                            ## Reset the merge buffer and merge counter..
+                            current_port.clear_merge_buffer()
+                            current_port.set_merge_counter(current_port_message_number)
+                        else:
+
+                            ## Encountered an unpected message in the sequence, possible cases:
+                            # - MESSAGE_NO_RECEIVED > MESSAGE_NO_EXPECTED : Desynchronized
+                            # - MESSAGE_NO_RECEIVED = MESSAGE_NO_EXPECTED : Duplicated -> Ignore
+                            # - MESSAGE_NO_RECEIVED < MESSAGE_NO_EXPECTED - 1 : Missing messages, Desynchronized
+
+                            if current_port_message_number != current_port_merge_counter:
+                                ## Handle both desynchronization cases...
+                                _log("\t\t\t + unexpected message number received, possible desynchronization")
+
+                                ## Not the best way to handle it, but it's the cheapest fix...
+                                current_port.clear_merge_buffer()
+                                current_port.set_merge_counter(current_port_message_number)
+
+                                ## TODO: Figure out a better way to handle this failure case.
+
+
+                    else:
+                        ## If there was nothing in the merge buffer, then this
+                        # is likely a one-shot message. So we can call the onReceived
+                        # handler to handle the message.
+                        _log("\t + merge_buffer doesn't have content")
+                        if self._on_received_handler is not None:
+                            self._on_received_handler(
+                                current_port_channel,
+                                current_port.get_last_message().get_message_payload()
+                            )
+                        _log("_main_loop_iterate() -> Called onReceived handler with {}, {}".format(current_port_channel, current_port.get_merge_buffer()))
+                else:
+                    ## If we received a non-zero message number, this is probably part
+                    # of a chunked message.
+                    _log("_main_loop_iterate() -> This Device: READY | Remote Message Type: SENT | Received a message numbered {}.".format(current_port_message_number))
+                    if current_port_merge_counter > 0:
+                        ## If the merge counter is non-zero, then we're currently
+                        # in the process of merging a message already...
+                        _log("\t + merge_buffer has content")
+                        if current_port_message_number == current_port_merge_counter - 1:
+                            ## If the message we received is part of the expected sequence..
+                            _log("\t\t + expected: {}, received: {}".format(current_port_merge_counter - 1, current_port_message_number))
+                            current_port.append_to_merge_buffer(current_port.get_last_message().get_message_payload())
+                            current_port.set_merge_counter(current_port_message_number)
+                            _log(" + Received message fragment: {}".format(current_port.get_last_message().get_message_payload()))
+                        else:
+                            ## Encountered an unpected message in the sequence, possible cases:
+                            # - MESSAGE_NO_RECEIVED > MESSAGE_NO_EXPECTED : Desynchronized
+                            # - MESSAGE_NO_RECEIVED = MESSAGE_NO_EXPECTED : Duplicated -> Ignore
+                            # - MESSAGE_NO_RECEIVED < MESSAGE_NO_EXPECTED - 1 : Missing messages, Desynchronized
+
+                            if current_port_message_number != current_port_merge_counter:
+                                ## Handle both desynchronization cases...
+                                _log("\t\t\t + unexpected message number received, possible desynchronization")
+
+                                ## Not the best way to handle it, but it's the cheapest fix...
+                                current_port.clear_merge_buffer()
+                                current_port.set_merge_counter(current_port_message_number)
+
+                                ## TODO: Figure out a better way to handle this failure case.
+                    else:
+                        ## Otherwise, this is likely the start of a new chunked message...
+                        _log("\t + merge_buffer doesn't have content")
+                        current_port.append_to_merge_buffer(current_port.get_last_message().get_message_payload())
+                        current_port.set_merge_counter(current_port_message_number)
+                        _log("_main_loop_iterate() -> Received new message fragment: {}".format(current_port.get_last_message().get_message_payload()))
 
                 ## Start broadcasting that we have received the mssage
                 # and set our internal communication state to RECEIVED.
@@ -829,18 +1034,34 @@ class BrickNet(object):
         # so this function will only produce MESSAGE_TYPE_SENT
         messages_to_send = []
 
+        max_payload_length = Message.get_max_payload_length_for_subtype(message_subtype)
+
         if type(message) is str:
             message_length = len(message)
             if message_length > max_payload_length:
                 number_of_chunks = ceil(message_length / max_payload_length)
                 for i in range(number_of_chunks):
-                    start_i = i
-                    calculated_end_i = start_i + max_payload_length - 1
-                    end_i = message_length - 1 if calculated_end_i > message_length - 1 else calculated_end_i 
-                    message_to_send.append(Message(MESSAGE_TYPE_SENT, MESSAGE_SUBTYPE_DIRECT, payload=message[start_i:end_i]))
+                    start_i = i * max_payload_length
+                    calculated_end_i = start_i + max_payload_length
+                    end_i = message_length if calculated_end_i >= message_length else calculated_end_i 
+                    messages_to_send.append(Message(
+                        MESSAGE_TYPE_SENT, 
+                        message_subtype=MESSAGE_SUBTYPE_DIRECT, 
+                        ## Message number is descending, so that we can just check
+                        # if the message number is 0 to know that it's the last message.
+                        message_number=number_of_chunks - 1 - i,
+                        payload=message[start_i:end_i]
+                    ))
+                return messages_to_send
 
-                    ## TODO: Return to this after finishing the new Message constructor.
-
+            ## Otherwise, the message is shorter than the maximum payload length.
+            messages_to_send.append(Message(
+                MESSAGE_TYPE_SENT, 
+                message_subtype=MESSAGE_SUBTYPE_DIRECT, 
+                message_number = 0, 
+                payload=message
+            ))
+            return messages_to_send
 
 
     def send(self, destination, message):
@@ -850,19 +1071,21 @@ class BrickNet(object):
         @param `destination` : A destination BrickNet node ID.
         @param `message` : The contents to send to the specified ID.
         """
-        ## TODO: Add logic to split long messages into chunks
 
-        #DIRECT_AND_REDIRECT_MAX_PAYLOAD_LENGTH = 19
-        #messages_to_send = self._split_message_into_chunks(message, MESSAGE_SUBTYPE_DIRECT)
+        messages_to_send = self._split_message_into_chunks(message, MESSAGE_SUBTYPE_DIRECT)
+        _log("send() -> messages_to_send:")
+        for message in messages_to_send:
+            _log(" + {}".format(message))
 
 
-        message = Message(MESSAGE_TYPE_SENT, message)
+        #message = Message(MESSAGE_TYPE_SENT, message)
         enqueued_successfully = False
         for port in self._message_queue:
             ## Iterate through the list of ports inside the message queue...
             if port.get_broadcast_target_channel() == destination:
                 ## We found a matching port containing the destination...
-                port.messages_for_this_port().enqueue(message)
+                for message in messages_to_send:
+                    port.messages_for_this_port().enqueue(message)
                 enqueued_successfully = True
 
         if enqueued_successfully == False:
