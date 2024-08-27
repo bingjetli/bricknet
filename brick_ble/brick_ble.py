@@ -238,7 +238,7 @@ class HCIErrorCode(Exception):
     def get_description_for_this_code(self, error_code):
         if "description" in self._ERROR_CODE_MESSAGES[error_code]:
             return self._ERROR_CODE_MESSAGES[error_code]["description"]
-        
+
         return None
 
     def output_formatted_description_if_it_exists(self):
@@ -248,9 +248,12 @@ class HCIErrorCode(Exception):
 
         return ""
 
-
     def __str__(self):
-        return "[HCIErrorCode]: {} - {} {}".format(self.error_code, self.message, self.output_formatted_description_if_it_exists())
+        return "[HCIErrorCode]: {} - {} {}".format(
+            self.error_code,
+            self.message,
+            self.output_formatted_description_if_it_exists(),
+        )
 
 
 def _log(string_content):
@@ -367,7 +370,6 @@ def thread_ble_event_parser(
                         advertising data and then the RSSI. E.g handler(ad_data, rssi)
     """
 
-
     try:
         ## Create the LE_META_EVENT packet filter...
         le_meta_event_filter = bluez.hci_filter_new()
@@ -385,7 +387,9 @@ def thread_ble_event_parser(
             bt_hci_socket, LE_SCANNING_ENABLED, FILTER_DUPLICATES_ENABLED
         )
     except:
-        raise Exception("[BrickBLE]: An error occured while initializing the scanning thread.")
+        raise Exception(
+            "[BrickBLE]: An error occured while initializing the scanning thread."
+        )
 
     ## Now, we can start parsing the BLE advertising data.
     old_ble_filter = None
@@ -404,8 +408,16 @@ def thread_ble_event_parser(
                     _log("disabled advertising")
             elif async_broadcast_command.command == ASYNC_BROADCAST_START:
                 if is_broadcasting == True:
-                    bt_hci_le_set_advertising_data(bt_hci_socket, len(async_broadcast_command.payload), async_broadcast_command.payload)
-                    _log("advertising data set to {}".format(async_broadcast_command.payload))
+                    bt_hci_le_set_advertising_data(
+                        bt_hci_socket,
+                        len(async_broadcast_command.payload),
+                        async_broadcast_command.payload,
+                    )
+                    _log(
+                        "advertising data set to {}".format(
+                            async_broadcast_command.payload
+                        )
+                    )
                 else:
                     bt_hci_le_set_advertising_parameters(
                         bt_hci_socket,
@@ -415,16 +427,23 @@ def thread_ble_event_parser(
                     )
                     _log("advertising parameters set")
 
-                    bt_hci_le_set_advertising_data(bt_hci_socket, len(async_broadcast_command.payload), async_broadcast_command.payload)
+                    bt_hci_le_set_advertising_data(
+                        bt_hci_socket,
+                        len(async_broadcast_command.payload),
+                        async_broadcast_command.payload,
+                    )
                     _log("advertising data set")
 
                     bt_hci_le_set_advertise_enable(bt_hci_socket, ADVERTISING_ENABLED)
                     is_broadcasting = True
                     _log("broadcasting enabled")
             else:
-                raise Exception("[BrickBLE]: Unknown async broadcast command sent: {}".format(async_broadcast_command.command))
+                raise Exception(
+                    "[BrickBLE]: Unknown async broadcast command sent: {}".format(
+                        async_broadcast_command.command
+                    )
+                )
             broadcast_queue.task_done()
-
 
         ## Otherwise, check if there are any spike packets being broadcasted.
         raw_hci_packet = None
@@ -449,9 +468,7 @@ def thread_ble_event_parser(
         finally:
             ## We should restore the old socket filter after we're
             # done with it.
-            bt_hci_socket.setsockopt(
-                bluez.SOL_HCI, bluez.HCI_FILTER, old_ble_filter
-            )
+            bt_hci_socket.setsockopt(bluez.SOL_HCI, bluez.HCI_FILTER, old_ble_filter)
             _log("listener, restored old socket filter")
 
         ## We will continue to run the loop until the exit flag thread
@@ -490,6 +507,7 @@ def thread_ble_event_parser(
     ## If we've reached this point, it means the exit flag event was
     # set by the calling thread, so we perform cleanup actions here.
 
+
 def bt_hci_reset(hci_socket):
     """
     Sends a message to the HCI to reset the controller into a known state.
@@ -505,10 +523,9 @@ def bt_hci_reset(hci_socket):
         timeout=HCI_DEFAULT_TIMEOUT,
     )
     _log("COMMAND SENT: HCI_RESET")
-    (status, ) = unpacked_response = struct.unpack("<B", response)
+    (status,) = unpacked_response = struct.unpack("<B", response)
     _log(" + raw response: {}".format(response))
     _log(" + unpacked response: {}".format(unpacked_response))
-
 
     if status != RESPONSE_SUCCESS:
         raise HCIErrorCode(status)
@@ -578,13 +595,9 @@ def bt_hci_le_read_buffer_size(hci_socket):
         timeout=HCI_DEFAULT_TIMEOUT,
     )
     _log("COMMAND SENT: HCI_LE_READ_BUFFER_SIZE")
-    (
-        status, 
-        hc_le_data_packet_length, 
-        hc_total_num_le_data_packets
-    ) = unpacked_response = struct.unpack(
-        "<BHB", response
-    )
+    (status, hc_le_data_packet_length, hc_total_num_le_data_packets) = (
+        unpacked_response
+    ) = struct.unpack("<BHB", response)
     _log(" + raw response: {}".format(response))
     _log(" + unpacked response: {}".format(unpacked_response))
 
@@ -601,18 +614,16 @@ def bt_hci_read_buffer_size(hci_socket):
         OCF_HCI_READ_BUFFER_SIZE,
         EVENT_COMMAND_COMPLETE,
         0x08,
-        timeout=HCI_DEFAULT_TIMEOUT
+        timeout=HCI_DEFAULT_TIMEOUT,
     )
     _log("COMMAND SENT: HCI_READ_BUFFER_SIZE")
     (
-        status, 
+        status,
         hc_acl_data_packet_length,
         hc_synchronous_data_packet_length,
         hc_total_num_acl_data_packets,
         hc_total_num_synchronous_data_packets,
-    ) = unpacked_response = struct.unpack(
-        "<BHBHH", response
-    )
+    ) = unpacked_response = struct.unpack("<BHBHH", response)
     _log(" + raw response: {}".format(response))
     _log(" + unpacked response: {}".format(unpacked_response))
 
@@ -675,7 +686,7 @@ def bt_hci_le_set_scan_parameters(
         timeout=HCI_DEFAULT_TIMEOUT,
     )
     _log("COMMAND SENT: HCI_LE_SET_SCAN_PARAMETERS")
-    (status, ) = unpacked_response = struct.unpack("<B", response)
+    (status,) = unpacked_response = struct.unpack("<B", response)
     _log(" + raw response: {}".format(response))
     _log(" + unpacked response: {}".format(unpacked_response))
 
@@ -705,10 +716,9 @@ def bt_hci_le_set_scan_enable(hci_socket, scan_enable, filter_duplicates):
         timeout=HCI_DEFAULT_TIMEOUT,
     )
     _log("COMMAND SENT: HCI_LE_SET_SCAN_ENABLE")
-    (status, ) = unpacked_response = struct.unpack("<B", response)
+    (status,) = unpacked_response = struct.unpack("<B", response)
     _log(" + raw response: {}".format(response))
     _log(" + unpacked response: {}".format(unpacked_response))
-
 
     if status != RESPONSE_SUCCESS:
         raise HCIErrorCode(status)
@@ -755,10 +765,9 @@ def bt_hci_le_set_advertising_parameters(
         timeout=HCI_DEFAULT_TIMEOUT,
     )
     _log("COMMAND SENT: HCI_LE_SET_ADVERTISING_PARAMETERS")
-    (status, ) = unpacked_response = struct.unpack("<B", response)
+    (status,) = unpacked_response = struct.unpack("<B", response)
     _log(" + raw response: {}".format(response))
     _log(" + unpacked response: {}".format(unpacked_response))
-
 
     if status != RESPONSE_SUCCESS:
         raise HCIErrorCode(status)
@@ -815,7 +824,7 @@ def bt_hci_le_set_advertising_data(
     )
 
     _log("COMMAND SENT: HCI_LE_SET_ADVERTISING_DATA")
-    (status, ) = unpacked_response = struct.unpack("<B", response)
+    (status,) = unpacked_response = struct.unpack("<B", response)
     _log(" + raw response: {}".format(response))
     _log(" + unpacked response: {}".format(unpacked_response))
 
@@ -846,7 +855,7 @@ def bt_hci_le_set_advertise_enable(hci_socket, advertising_enable=ADVERTISING_DI
         timeout=HCI_DEFAULT_TIMEOUT,
     )
     _log("COMMAND SENT: HCI_LE_SET_ADVERTISE_ENABLE")
-    (status, ) = unpacked_response = struct.unpack("<B", response)
+    (status,) = unpacked_response = struct.unpack("<B", response)
     _log(" + raw response: {}".format(response))
     _log(" + unpacked response: {}".format(unpacked_response))
 
@@ -856,7 +865,6 @@ def bt_hci_le_set_advertise_enable(hci_socket, advertising_enable=ADVERTISING_DI
 
 
 class BrickBLE(object):
-
     # TODO: Enforce singleton pattern.
 
     # The broadcast channel is has a valid value from 0 to 255.
@@ -901,25 +909,23 @@ class BrickBLE(object):
             ## First, try to ensure that the Bluetooth controller is powered.
             btu.toggle_device(self._device_id, True)
 
-
             ## Reset the device to a known state.
             # TODO: Figure out what HCI calls this command sends and implement it
             # instead of relying on the external system call.
-            subprocess.run(["sudo", "hciconfig", "hci{}".format(self._device_id), "reset"])
-
+            subprocess.run(
+                ["sudo", "hciconfig", "hci{}".format(self._device_id), "reset"]
+            )
 
             ## Then, try to open a socket connection to the Bluetooth
             # Host Controller Interface (HCI).
             self._hci_socket = bluez.hci_open_dev(self._device_id)
 
-
             ## Reset the controller to a known state.
-            #bt_hci_reset(self._hci_socket)
-
+            # bt_hci_reset(self._hci_socket)
 
             # ## Read the Buffer size for the LE controller.
             # (
-            #     le_acl_data_packet_length, 
+            #     le_acl_data_packet_length,
             #     total_number_of_le_acl_data_packets
             # ) = bt_hci_le_read_buffer_size(self._hci_socket)
 
@@ -933,9 +939,6 @@ class BrickBLE(object):
             #         total_number_of_acl_data_packets,
             #         total_number_of_synchronous_data_packets
             #     ) = bt_hci_read_buffer_size(self._hci_socket)
-
-
-
 
             # new_filter = bluez.hci_filter_new()
             # bluez.hci_filter_set_ptype(new_filter, bluez.HCI_EVENT_PKT)
@@ -1004,7 +1007,6 @@ class BrickBLE(object):
         bt_hci_le_set_scan_enable(
             self._hci_socket, LE_SCANNING_DISABLED, FILTER_DUPLICATES_DISABLED
         )
-
 
         ## Close the socket to the HCI.
         self._hci_socket.close()
@@ -1556,7 +1558,9 @@ class BrickBLE(object):
             return
 
         pybricks_encoded_data = self._generate_pybricks_encoded_ad_data(data)
-        self._broadcast_queue.put(AsyncBroadcastCommand(ASYNC_BROADCAST_START, pybricks_encoded_data))
+        self._broadcast_queue.put(
+            AsyncBroadcastCommand(ASYNC_BROADCAST_START, pybricks_encoded_data)
+        )
 
     def set_broadcast_channel(self, new_broadcast_channel):
         """
