@@ -249,7 +249,7 @@ class HCIErrorCode(Exception):
         return ""
 
     def __str__(self):
-        return "[HCIErrorCode]: {} - {} {}".format(
+        return "\n[HCIErrorCode]: {} - {} {}\n".format(
             self.error_code,
             self.message,
             self.output_formatted_description_if_it_exists(),
@@ -369,6 +369,7 @@ def thread_ble_event_parser(
                         data. It should take 2 parameters : First, the
                         advertising data and then the RSSI. E.g handler(ad_data, rssi)
     """
+    _log("Entered the ble_event_parser thread...")
 
     try:
         ## Create the LE_META_EVENT packet filter...
@@ -394,6 +395,7 @@ def thread_ble_event_parser(
     ## Now, we can start parsing the BLE advertising data.
     old_ble_filter = None
     is_broadcasting = False
+    _log("Preparing to enter the ble_event_parser loop...")
     while not event_exit_flag.is_set():
         ## Broadcast if there are items in the queue.
         if broadcast_queue.empty() == False:
@@ -984,9 +986,11 @@ class BrickBLE(object):
             )
 
     def __enter__(self):
+        _log("Entered the BrickBLE context manager...")
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
+        _log("Exited the BrickBLE context manager, beginning the cleanup process...")
         self._broadcast_queue.join()
 
         ## Set the exit event flag for the scanning thread, to indicate

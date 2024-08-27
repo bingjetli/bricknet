@@ -17,6 +17,8 @@
 ## *********************
 
 DEBUG_ENABLED = True
+
+
 def _log(input):
     """
     Prints a message to the console if debugging is enabled.
@@ -30,11 +32,11 @@ def _log(input):
         print("[BrickNet]: {}".format(input))
 
 
-
-
 ## ****************
 ## REQUIRED IMPORTS
 ## ****************
+
+from pb_fthreads import FThreadPool, sleep_until_ms
 
 try:
     from brick_ble import BrickBLE
@@ -127,9 +129,9 @@ COMMUNICATION_STATE_READY = "ready"
 COMMUNICATION_STATE_SENT = "sent"
 COMMUNICATION_STATE_RECEIVED = "received"
 
-#MESSAGE_TYPE_READY = "#R#"
-#MESSAGE_TYPE_SENT = "#S#"
-#MESSAGE_TYPE_RECEIVED = "#A#"
+# MESSAGE_TYPE_READY = "#R#"
+# MESSAGE_TYPE_SENT = "#S#"
+# MESSAGE_TYPE_RECEIVED = "#A#"
 
 MESSAGE_TYPE_READY = 0x00
 MESSAGE_TYPE_SENT = 0x01
@@ -172,8 +174,6 @@ def is_valid_message_type(input):
         or input == MESSAGE_TYPE_RECEIVED
         or input == MESSAGE_TYPE_SENT
     )
-
-
 
 
 ## *****************
@@ -258,11 +258,11 @@ class Message(object):
     _payload = None
 
     def __init__(
-        self, 
-        message_type, 
-        message_subtype=MESSAGE_SUBTYPE_DIRECT, 
-        message_number = 0, 
-        payload=None
+        self,
+        message_type,
+        message_subtype=MESSAGE_SUBTYPE_DIRECT,
+        message_number=0,
+        payload=None,
     ):
         ## Validating the message_type parameter...
         if (
@@ -273,21 +273,27 @@ class Message(object):
             raise Exception("[BrickNet]: Unknown message type: {}".format(message_type))
 
         ## Validating the message_subtype parameter...
-        if(
-            message_subtype != MESSAGE_SUBTYPE_DIRECT and
-            message_subtype != MESSAGE_SUBTYPE_REDIRECT and
-            message_subtype != MESSAGE_SUBTYPE_GET and
-            message_subtype != MESSAGE_SUBTYPE_POST and
-            message_subtype != MESSAGE_SUBTYPE_PUT and
-            message_subtype != MESSAGE_SUBTYPE_PATCH and
-            message_subtype != MESSAGE_SUBTYPE_DELETE
+        if (
+            message_subtype != MESSAGE_SUBTYPE_DIRECT
+            and message_subtype != MESSAGE_SUBTYPE_REDIRECT
+            and message_subtype != MESSAGE_SUBTYPE_GET
+            and message_subtype != MESSAGE_SUBTYPE_POST
+            and message_subtype != MESSAGE_SUBTYPE_PUT
+            and message_subtype != MESSAGE_SUBTYPE_PATCH
+            and message_subtype != MESSAGE_SUBTYPE_DELETE
         ):
-            raise Exception("[BrickNet]: Unknown message subtype: {}".format(message_subtype))
+            raise Exception(
+                "[BrickNet]: Unknown message subtype: {}".format(message_subtype)
+            )
 
         ## Validate payload size...
         if payload is not None:
             if len(payload) > self.get_max_payload_length_for_subtype(message_subtype):
-                raise Exception("[BrickNet]: Payload maximum size exceeded: ({}) {}".format(len(payload), payload))
+                raise Exception(
+                    "[BrickNet]: Payload maximum size exceeded: ({}) {}".format(
+                        len(payload), payload
+                    )
+                )
 
         self._header = message_type
         self._message_type = message_type
@@ -315,7 +321,9 @@ class Message(object):
         [MESSAGE_TYPE_AND_SUBTYPE (1 byte)][MESSAGE_NUMBER (1 byte)]
 
         """
-        return pack_bytes("<BB", self._get_message_type_and_subtype(), self._message_number)
+        return pack_bytes(
+            "<BB", self._get_message_type_and_subtype(), self._message_number
+        )
 
     def get_broadcast_data(self):
         """
@@ -324,11 +332,11 @@ class Message(object):
         @returns: String - The payload of this message as a string.
         """
         _log("\t + Message->get_broadcast_data(): {}".format(self))
-        #return "{}{}".format(self._header, self._payload if self._payload else "")
+        # return "{}{}".format(self._header, self._payload if self._payload else "")
         if self._payload is None:
             return pack_bytes(
-                "<2s", 
-                self._get_message_header(), 
+                "<2s",
+                self._get_message_header(),
             )
 
         formatted_payload = self._payload
@@ -337,11 +345,10 @@ class Message(object):
             formatted_payload = bytes(self._payload, "utf-8")
 
         return pack_bytes(
-            "<2s{}s".format(len(self._payload)), 
-            self._get_message_header(), 
-            formatted_payload
+            "<2s{}s".format(len(self._payload)),
+            self._get_message_header(),
+            formatted_payload,
         )
-
 
     def get_message_type(self):
         """
@@ -369,10 +376,9 @@ class Message(object):
 
         ## TODO: complete this for each subtype
 
-
     @staticmethod
     def generate_from_observed_data(raw_data):
-        message_subtype = raw_data[0] & 0x0f
+        message_subtype = raw_data[0] & 0x0F
         message_type = raw_data[0] >> 4
         message_number = raw_data[1]
         message_payload = None
@@ -383,14 +389,13 @@ class Message(object):
 
         return Message(message_type, message_subtype, message_number, message_payload)
 
-
     def __str__(self):
         return "Type: {}, Subtype: {}, Number: {}, Payload: {} ({})".format(
-            self._message_type, 
-            self._message_subtype, 
-            self._message_number, 
+            self._message_type,
+            self._message_subtype,
+            self._message_number,
             self._payload,
-            len(self._payload) if self._payload is not None else 0
+            len(self._payload) if self._payload is not None else 0,
         )
 
 
@@ -445,7 +450,6 @@ class Port(object):
     def messages_for_this_port(self):
         return self._to_send
 
-
     def get_merge_buffer(self):
         return self._merge_buffer
 
@@ -455,7 +459,7 @@ class Port(object):
             self._merge_buffer = item
             return
 
-        self._merge_buffer+= item
+        self._merge_buffer += item
 
     def set_merge_counter(self, new_value):
         self._merge_counter = new_value
@@ -465,7 +469,6 @@ class Port(object):
 
     def clear_merge_buffer(self):
         self._merge_buffer = None
-
 
     def set_remote_state(self, state):
         if is_valid_communication_state(state):
@@ -552,7 +555,6 @@ class BrickNet(object):
     ## Flag to indicate whether or not the main event loop is running.
     _is_running = False
 
-    # Dynamite Jobs: Job recruiting website. TODO: add this to notes.
     _message_queue = None
 
     ## Specifies the current port of the message queue that the main loop
@@ -564,11 +566,9 @@ class BrickNet(object):
     # RECEIVED states.
     _communication_state = None
 
-    
     ## Used to keep track of how long each state transition takes and
     # determine when to timeout the state transition.
     _stopwatch = None
-
 
     ## Expected to contain a reference to the function that will be used
     # to handle whenever a message is received.
@@ -576,6 +576,8 @@ class BrickNet(object):
     # The handler function takes 2 parameters: channel & message.
     _on_received_handler = None
 
+    ## This contains a reference to the FThreadPool instance used to manage concurrency.
+    _fthread_pool = None
 
     def __init__(self, bluetooth_manager_type, **kwargs):
         """
@@ -592,12 +594,20 @@ class BrickNet(object):
                 )
             )
         self._bluetooth_manager_type = bluetooth_manager_type
-        _log("BrickNet.__init__ : {} is a valid bluetooth_manager_type.".format(bluetooth_manager_type))
+        _log(
+            "BrickNet.__init__ : {} is a valid bluetooth_manager_type.".format(
+                bluetooth_manager_type
+            )
+        )
 
         ## Then, try to obtain the specified Bluetooth Manager class from
         # the global symbols collection and assign it to bluetooth_manager_class.
         bluetooth_manager_class = globals().get(bluetooth_manager_type)
-        _log("BrickNet.__init__ : {} was obtained from the global symbols collection.".format(bluetooth_manager_class))
+        _log(
+            "BrickNet.__init__ : {} was obtained from the global symbols collection.".format(
+                bluetooth_manager_class
+            )
+        )
 
         ## This effectively allows us to dynamically instantiate the
         # specified Bluetooth manager class without needing the class
@@ -636,9 +646,8 @@ class BrickNet(object):
         #   only `if` the value `v is not None`.
         filtered_kwargs = {k: v for (k, v) in VALID_KWARGS.items() if v is not None}
         _log("BrickNet.__init__ : kwargs passed in to the constructor.")
-        for (key, value) in filtered_kwargs.items():
+        for key, value in filtered_kwargs.items():
             _log("\t + {}:{}".format(key, value))
-
 
         ## We can then transparently pass in any arguments passed into the
         # BrickNet class by unpacking the filtered_kwargs we defined
@@ -664,10 +673,17 @@ class BrickNet(object):
 
         ## Initialize low priority properties...
         self._current_port_index = 0
-        _log("BrickNet.__init__ : initialized current_port_index as {}".format(self._current_port_index))
+        _log(
+            "BrickNet.__init__ : initialized current_port_index as {}".format(
+                self._current_port_index
+            )
+        )
 
         self._stopwatch = StopWatch()
         _log("BrickNet.__init__ : stopwatch initialized")
+
+        self._fthread_pool = FThreadPool(5)  # magic number #TODO: Make this a constant
+        _log("BrickNet.__init__ : initialized fthread pool with 5 worker threads.")
 
     def get_bluetooth_manager(self):
         """
@@ -683,32 +699,50 @@ class BrickNet(object):
     def start(self):
         """
         Starts the BrickNet main event loop.
+
+        This is a blocking call.
         """
+        # TODO: I think we have it all set up properly, just have to test it now ~past you.
         if self._bluetooth_manager_type == "BrickBLE":
             _log("BrickNet.start : Using the BrickBLE bluetooth manager.")
             with self._bluetooth_manager as brick_ble:
-                self._start_event_loop(brick_ble)
+                self._fthread_pool.spawn(self._start_event_loop, brick_ble)
+
+                ## Initiate the blocking call to start the fthread pool executor.
+                self._fthread_pool.run()
         else:
             _log("BrickNet.start : Not using the BrickBLE bluetooth manager.")
             hub_ble = self._bluetooth_manager.ble
-            self._start_event_loop(hub_ble)
+            self._fthread_pool.spawn(self._start_event_loop, hub_ble)
 
-    def _start_event_loop(self, ble):
+            ## Initiate the blocking call to start the fthread pool executor.
+            self._fthread_pool.run()
+
+    async def _start_event_loop(self, ble, thread_pool, thread_id):
         self._is_running = True
         self._communication_state = COMMUNICATION_STATE_READY
 
-        _log("BrickNet._start_event_loop : broadcasting to the first port that this device is ready.")
+        _log(
+            "BrickNet._start_event_loop : broadcasting to the first port that this device is ready."
+        )
         ## Broadcast to the first port that it is ready.
         current_port = self._message_queue[self._current_port_index]
         current_port_channel = current_port.get_broadcast_target_channel()
         initial_message = Message(MESSAGE_TYPE_READY)
-        self._send_now(initial_message, current_port_channel)
-
+        _log(
+            "_start_event_loop() #{} -> _send_now({}, {}) ".format(
+                thread_id, initial_message, current_port_channel
+            )
+        )
+        await self._send_now(initial_message, current_port_channel)
 
         _log("BrickNet._start_event_loop : Main event loop is started.")
         while self._is_running:
             try:
-                self._main_loop_iterate()
+                await self._main_loop_iterate(thread_id)
+
+                ## Prevent the while loop from hogging the CPU. This is used to yield control back to the other threads.
+                await sleep_until_ms(1)
 
             except KeyboardInterrupt:
                 ## If Ctrl+C was encountered, then we break out of the loop.
@@ -718,83 +752,115 @@ class BrickNet(object):
         _log("BrickNet._stop_event_loop : Main event loop set to stop.")
         self._is_running = False
 
-    def _main_loop_iterate(self):
+    async def _main_loop_iterate(self, thread_id):
+        _log("_main_loop_iterate : using Thread {}".format(thread_id))
         current_port = self._message_queue[self._current_port_index]
         current_port_channel = current_port.get_broadcast_target_channel()
 
-        #_log("BrickNet._main_loop_iterate: processing port: {}".format(current_port_channel))
+        # _log("BrickNet._main_loop_iterate: processing port: {}".format(current_port_channel))
 
         ## First, try to observe any data that was broadcasted over Bluetooth.
-        #observed_data = self.get_bluetooth_manager().observe(current_port_channel)
+        # observed_data = self.get_bluetooth_manager().observe(current_port_channel)
         observed_data = self._observe(current_port_channel)
         if observed_data == None:
             ## We didn't observe any data from this channel, so the remote device
             # might not be READY. In this case, we can skip this channel and try
             # to see if another channel might be ready.
-            _log("_main_loop_iterate() -> no observed data, incrementing port from {}".format(current_port_channel))
+            _log(
+                "_main_loop_iterate() -> no observed data, incrementing port from {}".format(
+                    current_port_channel
+                )
+            )
             self._increment_port_index()
             _log(" + to {}".format(current_port.get_broadcast_target_channel()))
             return
 
         ## Otherwise, if we observed something other than None...
-        #message_type = observed_data[0:3]
-        #message_payload = (
+        # message_type = observed_data[0:3]
+        # message_payload = (
         #    observed_data[3:] if message_type == MESSAGE_TYPE_SENT else None
-        #)
-        #current_port.set_last_message(Message(message_type, message_payload))
+        # )
+        # current_port.set_last_message(Message(message_type, message_payload))
         observed_message = Message.generate_from_observed_data(observed_data)
         current_port.set_last_message(observed_message)
-        #_log("BrickNet._main_loop_iterate: observed message: {}".format(observed_message))
-
+        # _log("BrickNet._main_loop_iterate: observed message: {}".format(observed_message))
 
         if self._communication_state == COMMUNICATION_STATE_READY:
             ## We're ready to receive or send messages...
             if current_port.get_last_message().get_message_type() == MESSAGE_TYPE_SENT:
                 ## We're ready, and the remote device just sent something...
 
-                current_port_message_number = current_port.get_last_message().get_message_number()
+                current_port_message_number = (
+                    current_port.get_last_message().get_message_number()
+                )
                 current_port_merge_counter = current_port.get_merge_counter()
                 if current_port_message_number == 0:
                     ## We received a zero message number, so this is either the last
                     # message of a chunk of messages or a non-shot message.
-                    _log("_main_loop_iterate() -> This Device: READY | Remote Message Type: SENT | Received a message numbered 0.")
+                    _log(
+                        "_main_loop_iterate() -> This Device: READY | Remote Message Type: SENT | Received a message numbered 0."
+                    )
                     if current_port_merge_counter > 0:
                         ## There is something in the merge buffer, so we should check if this message was expected
                         _log("\t + merge_buffer has content")
-                        if current_port_message_number == current_port_merge_counter - 1:
+                        if (
+                            current_port_message_number
+                            == current_port_merge_counter - 1
+                        ):
                             ## If it is, then we merge the message that we just
                             # received as the final message, clear the buffer and
                             # call the onReceived handler.
-                            _log("\t\t + expected: {}, received: {}".format(current_port_merge_counter - 1, current_port_message_number))
-                            current_port.append_to_merge_buffer(current_port.get_last_message().get_message_payload())
-                            _log("\t\t\t + appending the following to the merge buffer: {}".format(current_port.get_last_message().get_message_payload()))
+                            _log(
+                                "\t\t + expected: {}, received: {}".format(
+                                    current_port_merge_counter - 1,
+                                    current_port_message_number,
+                                )
+                            )
+                            current_port.append_to_merge_buffer(
+                                current_port.get_last_message().get_message_payload()
+                            )
+                            _log(
+                                "\t\t\t + appending the following to the merge buffer: {}".format(
+                                    current_port.get_last_message().get_message_payload()
+                                )
+                            )
                             if self._on_received_handler is not None:
                                 self._on_received_handler(
                                     current_port_channel,
                                     current_port.get_merge_buffer(),
                                 )
-                            _log("_main_loop_iterate() -> Called onReceived handler with {}, {}".format(current_port_channel, current_port.get_merge_buffer()))
+                            _log(
+                                "_main_loop_iterate() -> Called onReceived handler with {}, {}".format(
+                                    current_port_channel,
+                                    current_port.get_merge_buffer(),
+                                )
+                            )
 
                             ## Reset the merge buffer and merge counter..
                             current_port.clear_merge_buffer()
                             current_port.set_merge_counter(current_port_message_number)
                         else:
-
                             ## Encountered an unpected message in the sequence, possible cases:
                             # - MESSAGE_NO_RECEIVED > MESSAGE_NO_EXPECTED : Desynchronized
                             # - MESSAGE_NO_RECEIVED = MESSAGE_NO_EXPECTED : Duplicated -> Ignore
                             # - MESSAGE_NO_RECEIVED < MESSAGE_NO_EXPECTED - 1 : Missing messages, Desynchronized
 
-                            if current_port_message_number != current_port_merge_counter:
+                            if (
+                                current_port_message_number
+                                != current_port_merge_counter
+                            ):
                                 ## Handle both desynchronization cases...
-                                _log("\t\t\t + unexpected message number received, possible desynchronization")
+                                _log(
+                                    "\t\t\t + unexpected message number received, possible desynchronization"
+                                )
 
                                 ## Not the best way to handle it, but it's the cheapest fix...
                                 current_port.clear_merge_buffer()
-                                current_port.set_merge_counter(current_port_message_number)
+                                current_port.set_merge_counter(
+                                    current_port_message_number
+                                )
 
                                 ## TODO: Figure out a better way to handle this failure case.
-
 
                     else:
                         ## If there was nothing in the merge buffer, then this
@@ -804,51 +870,93 @@ class BrickNet(object):
                         if self._on_received_handler is not None:
                             self._on_received_handler(
                                 current_port_channel,
-                                current_port.get_last_message().get_message_payload()
+                                current_port.get_last_message().get_message_payload(),
                             )
-                        _log("_main_loop_iterate() -> Called onReceived handler with {}, {}".format(current_port_channel, current_port.get_merge_buffer()))
+                        _log(
+                            "_main_loop_iterate() -> Called onReceived handler with {}, {}".format(
+                                current_port_channel, current_port.get_merge_buffer()
+                            )
+                        )
                 else:
                     ## If we received a non-zero message number, this is probably part
                     # of a chunked message.
-                    _log("_main_loop_iterate() -> This Device: READY | Remote Message Type: SENT | Received a message numbered {}.".format(current_port_message_number))
+                    _log(
+                        "_main_loop_iterate() -> This Device: READY | Remote Message Type: SENT | Received a message numbered {}.".format(
+                            current_port_message_number
+                        )
+                    )
                     if current_port_merge_counter > 0:
                         ## If the merge counter is non-zero, then we're currently
                         # in the process of merging a message already...
                         _log("\t + merge_buffer has content")
-                        if current_port_message_number == current_port_merge_counter - 1:
+                        if (
+                            current_port_message_number
+                            == current_port_merge_counter - 1
+                        ):
                             ## If the message we received is part of the expected sequence..
-                            _log("\t\t + expected: {}, received: {}".format(current_port_merge_counter - 1, current_port_message_number))
-                            current_port.append_to_merge_buffer(current_port.get_last_message().get_message_payload())
+                            _log(
+                                "\t\t + expected: {}, received: {}".format(
+                                    current_port_merge_counter - 1,
+                                    current_port_message_number,
+                                )
+                            )
+                            current_port.append_to_merge_buffer(
+                                current_port.get_last_message().get_message_payload()
+                            )
                             current_port.set_merge_counter(current_port_message_number)
-                            _log(" + Received message fragment: {}".format(current_port.get_last_message().get_message_payload()))
+                            _log(
+                                " + Received message fragment: {}".format(
+                                    current_port.get_last_message().get_message_payload()
+                                )
+                            )
                         else:
                             ## Encountered an unpected message in the sequence, possible cases:
                             # - MESSAGE_NO_RECEIVED > MESSAGE_NO_EXPECTED : Desynchronized
                             # - MESSAGE_NO_RECEIVED = MESSAGE_NO_EXPECTED : Duplicated -> Ignore
                             # - MESSAGE_NO_RECEIVED < MESSAGE_NO_EXPECTED - 1 : Missing messages, Desynchronized
 
-                            if current_port_message_number != current_port_merge_counter:
+                            if (
+                                current_port_message_number
+                                != current_port_merge_counter
+                            ):
                                 ## Handle both desynchronization cases...
-                                _log("\t\t\t + unexpected message number received, possible desynchronization")
+                                _log(
+                                    "\t\t\t + unexpected message number received, possible desynchronization"
+                                )
 
                                 ## Not the best way to handle it, but it's the cheapest fix...
                                 current_port.clear_merge_buffer()
-                                current_port.set_merge_counter(current_port_message_number)
+                                current_port.set_merge_counter(
+                                    current_port_message_number
+                                )
 
                                 ## TODO: Figure out a better way to handle this failure case.
                     else:
                         ## Otherwise, this is likely the start of a new chunked message...
                         _log("\t + merge_buffer doesn't have content")
-                        current_port.append_to_merge_buffer(current_port.get_last_message().get_message_payload())
+                        current_port.append_to_merge_buffer(
+                            current_port.get_last_message().get_message_payload()
+                        )
                         current_port.set_merge_counter(current_port_message_number)
-                        _log("_main_loop_iterate() -> Received new message fragment: {}".format(current_port.get_last_message().get_message_payload()))
+                        _log(
+                            "_main_loop_iterate() -> Received new message fragment: {}".format(
+                                current_port.get_last_message().get_message_payload()
+                            )
+                        )
 
                 ## Start broadcasting that we have received the mssage
                 # and set our internal communication state to RECEIVED.
                 response_message = Message(MESSAGE_TYPE_RECEIVED)
-                self._send_now(response_message, current_port_channel)
+                _log(
+                    "_main_loop_iterate() #{} -> _send_now({}, {}) ".format(
+                        thread_id, response_message, current_port_channel
+                    )
+                )
+                await self._send_now(response_message, current_port_channel)
                 self._communication_state = COMMUNICATION_STATE_RECEIVED
-                _log("BrickNet._main_loop_iterate: Received SENT, broadcasting RECEIVED")
+                _log(
+                    "BrickNet._main_loop_iterate: Received SENT, broadcasting RECEIVED"
+                )
 
                 ## Reset the internal stopwatch so that we can start
                 # tracking the amount of time the device spends outside
@@ -868,25 +976,35 @@ class BrickNet(object):
                     current_port.set_is_processed(False)
                     self._increment_port_index()
 
-                    _log("BrickNet._main_loop_iterate: Received READY, port is processed already, incrementing")
+                    _log(
+                        "BrickNet._main_loop_iterate: Received READY, port is processed already, incrementing"
+                    )
 
                     ## Then skip the rest of the function for this iteration..
                     return
 
                 ## Check if there are any messages in the queue for this port.
-                #if len(current_port.messages_for_this_port()) > 0:
+                # if len(current_port.messages_for_this_port()) > 0:
                 if current_port.messages_for_this_port().get_length() > 0:
                     ## There are messages in the queue for this port...
 
                     ## Broadcast the first message in the message queue for
                     # this port.
-                    self._send_now(
+                    _log(
+                        "_main_loop_iterate() #{} -> _send_now({}, {}) ".format(
+                            thread_id,
+                            current_port.messages_for_this_port().peek(),
+                            current_port_channel,
+                        )
+                    )
+                    await self._send_now(
                         current_port.messages_for_this_port().peek(),
                         current_port_channel,
                     )
                     self._communication_state = COMMUNICATION_STATE_SENT
-                    _log("BrickNet._main_loop_iterate: Received READY, there are unsent messages, broadcasting SENT")
-
+                    _log(
+                        "BrickNet._main_loop_iterate: Received READY, there are unsent messages, broadcasting SENT"
+                    )
 
                     ## Reset the stopwatch such that we start tracking how
                     # much time will pass now that the state has transitioned
@@ -910,9 +1028,18 @@ class BrickNet(object):
                 # broadcast that we are ready to send again.
                 response_message = Message(MESSAGE_TYPE_READY)
                 self._communication_state = COMMUNICATION_STATE_READY
-                self._send_now(response_message, current_port_channel)
+                _log(
+                    "_main_loop_iterate() #{} -> _send_now({}, {}) ".format(
+                        thread_id,
+                        response_message,
+                        current_port_channel,
+                    )
+                )
+                await self._send_now(response_message, current_port_channel)
 
-                _log("BrickNet._main_loop_iterate: Received RECEIVED, broadcasting READY")
+                _log(
+                    "BrickNet._main_loop_iterate: Received RECEIVED, broadcasting READY"
+                )
 
                 # We also set the flag for this port to indicate that
                 # we have successfully processed the message queue
@@ -934,12 +1061,21 @@ class BrickNet(object):
                 # that state to the remote device.
                 response_message = Message(MESSAGE_TYPE_READY)
                 self._communication_state = COMMUNICATION_STATE_READY
-                self._send_now(response_message, current_port_channel)
-                _log("BrickNet._main_loop_iterate: SENT but no response, broadcasting READY")
+                _log(
+                    "_main_loop_iterate() #{} -> _send_now({}, {}) ".format(
+                        thread_id,
+                        response_message,
+                        current_port_channel,
+                    )
+                )
+                await self._send_now(response_message, current_port_channel)
+                _log(
+                    "BrickNet._main_loop_iterate: SENT but no response, broadcasting READY"
+                )
 
                 ## Skip the rest of this iteration.
                 return
-                
+
         elif self._communication_state == COMMUNICATION_STATE_RECEIVED:
             ## If the device is in this state, then it's broadcasting
             # the RECEIVED state and it is expecting the remote device
@@ -951,7 +1087,14 @@ class BrickNet(object):
                 # the process.
                 response_message = Message(MESSAGE_TYPE_READY)
                 self._communication_state = COMMUNICATION_STATE_READY
-                self._send_now(response_message, current_port_channel)
+                _log(
+                    "_main_loop_iterate() #{} -> _send_now({}, {}) ".format(
+                        thread_id,
+                        response_message,
+                        current_port_channel,
+                    )
+                )
+                await self._send_now(response_message, current_port_channel)
                 _log("BrickNet._main_loop_iterate: Received READY, broadcasting READY")
 
                 ## Skip the rest of the iteration
@@ -966,8 +1109,17 @@ class BrickNet(object):
                 # that state to the remote device.
                 response_message = Message(MESSAGE_TYPE_READY)
                 self._communication_state = COMMUNICATION_STATE_READY
-                self._send_now(response_message, current_port_channel)
-                _log("BrickNet._main_loop_iterate: RECEIVED, but no response, broadcasting READY")
+                _log(
+                    "_main_loop_iterate() #{} -> _send_now({}, {}) ".format(
+                        thread_id,
+                        response_message,
+                        current_port_channel,
+                    )
+                )
+                await self._send_now(response_message, current_port_channel)
+                _log(
+                    "BrickNet._main_loop_iterate: RECEIVED, but no response, broadcasting READY"
+                )
 
         else:
             raise Exception(
@@ -976,7 +1128,7 @@ class BrickNet(object):
                 )
             )
 
-    def _broadcast(self, message):
+    async def _broadcast(self, message):
         """
         Reference to the correct broadcast method for the bluetooth manager.
         """
@@ -985,7 +1137,7 @@ class BrickNet(object):
             return
 
         ## Otherwise, use the hub method.
-        self.get_bluetooth_manager().ble.broadcast(message)
+        await self.get_bluetooth_manager().ble.broadcast(message)
 
     def _observe(self, channel):
         """
@@ -997,8 +1149,7 @@ class BrickNet(object):
         ## Otherwise, use the hub method.
         return self.get_bluetooth_manager().ble.observe(channel)
 
-
-    def _send_now(self, message, destination_channel):
+    async def _send_now(self, message, destination_channel):
         """
         Bypasses the message queue and immediately broadcasts the specified message.
 
@@ -1016,7 +1167,7 @@ class BrickNet(object):
             # the destination_channel parameter when BrickBLE is being used.
             self.get_bluetooth_manager().set_broadcast_channel(destination_channel)
 
-        self._broadcast(message.get_broadcast_data())
+        await self._broadcast(message.get_broadcast_data())
         _log("BrickNet._send_now: sent {}".format(message.get_message_type()))
 
     def _increment_port_index(self):
@@ -1043,26 +1194,33 @@ class BrickNet(object):
                 for i in range(number_of_chunks):
                     start_i = i * max_payload_length
                     calculated_end_i = start_i + max_payload_length
-                    end_i = message_length if calculated_end_i >= message_length else calculated_end_i 
-                    messages_to_send.append(Message(
-                        MESSAGE_TYPE_SENT, 
-                        message_subtype=MESSAGE_SUBTYPE_DIRECT, 
-                        ## Message number is descending, so that we can just check
-                        # if the message number is 0 to know that it's the last message.
-                        message_number=number_of_chunks - 1 - i,
-                        payload=message[start_i:end_i]
-                    ))
+                    end_i = (
+                        message_length
+                        if calculated_end_i >= message_length
+                        else calculated_end_i
+                    )
+                    messages_to_send.append(
+                        Message(
+                            MESSAGE_TYPE_SENT,
+                            message_subtype=MESSAGE_SUBTYPE_DIRECT,
+                            ## Message number is descending, so that we can just check
+                            # if the message number is 0 to know that it's the last message.
+                            message_number=number_of_chunks - 1 - i,
+                            payload=message[start_i:end_i],
+                        )
+                    )
                 return messages_to_send
 
             ## Otherwise, the message is shorter than the maximum payload length.
-            messages_to_send.append(Message(
-                MESSAGE_TYPE_SENT, 
-                message_subtype=MESSAGE_SUBTYPE_DIRECT, 
-                message_number = 0, 
-                payload=message
-            ))
+            messages_to_send.append(
+                Message(
+                    MESSAGE_TYPE_SENT,
+                    message_subtype=MESSAGE_SUBTYPE_DIRECT,
+                    message_number=0,
+                    payload=message,
+                )
+            )
             return messages_to_send
-
 
     def send(self, destination, message):
         """
@@ -1072,13 +1230,14 @@ class BrickNet(object):
         @param `message` : The contents to send to the specified ID.
         """
 
-        messages_to_send = self._split_message_into_chunks(message, MESSAGE_SUBTYPE_DIRECT)
+        messages_to_send = self._split_message_into_chunks(
+            message, MESSAGE_SUBTYPE_DIRECT
+        )
         _log("send() -> messages_to_send:")
         for message in messages_to_send:
             _log(" + {}".format(message))
 
-
-        #message = Message(MESSAGE_TYPE_SENT, message)
+        # message = Message(MESSAGE_TYPE_SENT, message)
         enqueued_successfully = False
         for port in self._message_queue:
             ## Iterate through the list of ports inside the message queue...
@@ -1090,7 +1249,11 @@ class BrickNet(object):
 
         if enqueued_successfully == False:
             ## Otherwise, if we aren't able to enqueue the message...
-            raise Exception("[BrickNet]: No ports found with the following target: {}".format(destination))
+            raise Exception(
+                "[BrickNet]: No ports found with the following target: {}".format(
+                    destination
+                )
+            )
 
     def onReceived(self, handler):
         """
