@@ -36,6 +36,7 @@ def _log(input):
 ## REQUIRED IMPORTS
 ## ****************
 
+from socket import MSG_DONTWAIT
 from pb_fthreads import FThreadPool, sleep_until_ms
 
 try:
@@ -104,6 +105,58 @@ try:
 except ImportError:
     _log("ustruct.unpack is unavailable")
 
+
+## DEPRECATED
+try:
+    from urllib.request import urlopen
+except ImportError:
+    _log("urllib.request.urlopen is unavailable")
+
+try:
+    from urllib.request import Request
+except ImportError:
+    _log("urllib.request.Request is unavailable")
+
+try:
+    from urllib.error import HTTPError
+except ImportError:
+    _log("urllib.error.HTTPError is unavailable")
+
+try:
+    from urllib.error import URLError
+except ImportError:
+    _log("urllib.error.URLError is unavailable")
+
+## REQUIRED FOR ASYNC HTTP REQUESTS
+try:
+    from socket import socket
+except ImportError:
+    _log("socket.socket is unavailable")
+
+try:
+    from socket import AF_INET
+except ImportError:
+    _log("socket.AF_INET is unavailable")
+
+try:
+    from socket import SOCK_STREAM
+except ImportError:
+    _log("socket.SOCK_STREAM is unavailable")
+
+try:
+    from socket import MSG_DONTWAIT
+except ImportError:
+    _log("socket.MSG_DONTWAIT is unavailable")
+
+try:
+    from socket import gethostbyname
+except ImportError:
+    _log("socket.gethostbyname is unavailable")
+
+try:
+    from ssl import wrap_socket
+except ImportError:
+    _log("ssl.wrap_socket is unavailable")
 
 ## ********************
 ## CONSTANT DEFINITIONS
@@ -1133,6 +1186,7 @@ class BrickNet(object):
         Reference to the correct broadcast method for the bluetooth manager.
         """
         if self.get_bluetooth_manager_type() == "BrickBLE":
+            ## TODO: Make this awaitable?
             self.get_bluetooth_manager().broadcast(message)
             return
 
@@ -1263,7 +1317,7 @@ class BrickNet(object):
         """
         self._on_received_handler = handler
 
-    def fetch(self, resource, options):
+    def __old_fetch(self, resource, options={}):
         """
         If called from a LEGO SPIKE, it serializes the HTTP request and sends
         it to the EV3 for it to make the request.
@@ -1271,4 +1325,164 @@ class BrickNet(object):
         If called from a LEGO EV3, it makes an HTTP request.
         """
 
-        ## TODO: Return to this after finishing the message splitting function.
+        async def __fetch(resource, options, thread_pool, thread_id):
+            _log("\t\t__fetch(): handled by thread #{}".format(thread_id))
+            default_options = {
+                "method": "GET",
+                "headers": {},
+                "body": {},
+            }
+            merged_options = {**default_options, **options}
+
+            request = Request(resource, headers=merged_options["headers"])
+
+            _log(
+                "\t\t__fetch(): attempting to make http request to {}".format(resource)
+            )
+            try:
+                with urlopen(request, timeout=5) as response:
+                    _log("\t\t__fetch(): HTTP{}".format(response.status))
+                    _log("\t\t__fetch(): response body: {}".format(response.read()))
+            except HTTPError as e:
+                print(e.status, e.reason)
+            except URLError as e:
+                print(e.reason)
+            except TimeoutError:
+                print("Request timed out")
+
+        ## Spawn the thread to handle the http request.
+        self._fthread_pool.spawn(__fetch, resource, options)
+
+    def fetch(self, resource, options={}):
+        default_options = {
+            "method": "GET",
+            "headers": {},
+            "body": {},
+        }
+        merged_options = {**default_options, **options}
+
+        ## PHASE 1 : PARSE THE URL
+        ## -----------------------
+        url = {
+            "protocol": None,
+            "hostname": None,
+            "port": None,
+            "path": None,
+        }
+
+        ## Strip the URL
+        __url = resource.strip()
+
+        ## Parse the protocol.
+        protocol_delimiter = __url.find("://")
+        if protocol_delimiter > 0:
+            ## A protocol was specified in the URL.
+            url["protocol"] = __url[:protocol_delimiter].lower()
+            if url["protocol"] == "http":
+                url["port"] = 80
+            elif url["protocol"] == "https":
+                url["port"] = 443
+            else:
+                raise Exception(
+                    "The protocol {} is not supported.".format(url["protocol"])
+                )
+
+            ## Eliminate the protocol from the URL since we already parsed it.
+            __url = __url[protocol_delimiter + 3 :]
+
+        ## Parse the URL path.
+        path_delimiter = __url.find("/")
+        if path_delimiter == -1:
+            ## The URL is in the form of: hostname:port
+            url["path"] = "/"
+        else:
+            url["path"] = __url[path_delimiter + 1 :]
+
+        ### Parse the hostname.
+        # If the protocol was not specified earlier, then
+        # either the URL is invalid or it is in the form of:
+        # hostname:port/path/to/resource?query=parameters
+        # or
+        # hostname/path/to/resource?query=parameters
+        hostname_port = __url[:path_delimiter]
+
+        port_delimiter = hostname_port.find(":")
+        if port_delimiter == -1:
+            ## The hostname_port only contains the hostname.
+            if url["protocol"] is None:
+                url["port"] = 80
+                url["protocol"] = "http"
+            url["hostname"] = hostname_port
+        else:
+            ## Otherwise, the hostname_port contains the hostname and port.
+            url["port"] = int(hostname_port[port_delimiter + 1 :])
+            url["hostname"] = hostname_port[:port_delimiter]
+
+        ## Throw an exception if the URL failed to parse.
+        if None in url.values():
+            raise Exception(
+                "[BrickNet]: An error occured while parsing the URL: {}".format(
+                    resource
+                )
+            )
+
+        async def __fetch(url, merged_options, thread_pool, thread_id):
+            ## PHASE 2 : MAKING THE HTTP REQUEST
+            ## ---------------------------------
+
+            ## Resolve the hostname to an IP Address.
+            hostname_ip = gethostbyname(url["hostname"])
+
+            ## Create the HTTP Client Socket.
+            http_socket = socket(AF_INET, SOCK_STREAM)
+            if url["protocol"] == "https":
+                http_socket = wrap_socket(http_socket)
+
+            ## Building the HTTP Request.
+            minimal_header = {"Host": url["hostname"]}  ## Required in HTTP/1.1
+            serialized_header = ""
+            for k, v in {**minimal_header, **merged_options["headers"]}.items():
+                serialized_header += "{}: {}\r\n".format(k, v)
+
+            serialized_request = "{} {} HTTP/1.1\r\n{}\r\n\r\n".format(
+                merged_options["method"],
+                url["path"],
+                serialized_header,
+            )
+
+            ## Connecting to the server.
+            http_socket.connect((hostname_ip, url["port"]))
+
+            ## Sending the request.
+            http_socket.sendall(serialized_request.encode())
+
+            ## Await the response.
+            serialized_response = ""
+            while True:
+                try:
+                    data = http_socket.recv(1024, MSG_DONTWAIT)
+                    if data == b"":
+                        break
+                    serialized_response += data.decode()
+                except Exception as e:
+                    _log(
+                        "__fetch() #{}: while listening, an exception occured: {}".format(
+                            thread_id, e
+                        )
+                    )
+                finally:
+                    ## always yield control to another coroutine.
+                    await sleep_until_ms(1)
+
+            ## Handle the HTTP Response.
+            _log(
+                "__fetch() #{}: Received Response: \n---{}\n---".format(
+                    serialized_response
+                )
+            )
+
+            ## Close the HTTP socket.
+            http_socket.close()
+
+        ## Spawn the thread to handle the HTTP Request.
+        self._fthread_pool.spawn(__fetch, url, merged_options)
